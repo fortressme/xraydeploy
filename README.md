@@ -5,6 +5,7 @@
 
 
 
+
 一个面向 Linux（含 Alpine/OpenRC）的 Xray Core 部署与管理脚本。
 
 ## 功能
@@ -20,11 +21,13 @@
 	2. 修改配置项（基于 `jq` 路径）
 	3. 删除配置
 	4. 修改 DNS
-	5. 重启内核
-	6. 关闭内核
-	7. 启动内核
-	8. 指定 GEOIP 更新地址
-	9. 更新 GEOIP/GEOSITE
+	5. 显示配置（主配置/子配置）
+	6. 重启内核
+	7. 关闭内核
+	8. 启动内核
+	9. 指定 GEOIP 更新地址
+	10. 更新 GEOIP/GEOSITE
+	11. 彻底卸载（移除内核、日志、配置和相关目录）
 
 ## 使用方式
 
@@ -48,8 +51,12 @@ sudo ./xray-deploy.sh add-config
 sudo ./xray-deploy.sh edit-config
 sudo ./xray-deploy.sh delete-config
 sudo ./xray-deploy.sh set-dns
+sudo ./xray-deploy.sh show-config
+sudo ./xray-deploy.sh show-config main
+sudo ./xray-deploy.sh show-config 8936
 sudo ./xray-deploy.sh set-geo-source
 sudo ./xray-deploy.sh update-geo
+sudo ./xray-deploy.sh uninstall
 sudo ./xray-deploy.sh start|stop|restart|status
 ```
 
@@ -61,4 +68,5 @@ sudo ./xray-deploy.sh start|stop|restart|status
 - `change` 支持按 文件名 / inbound tag / 端口 进行模糊匹配
 - `change` 常用字段：`sni/serverName`、`port`、`tag`、`listen`、`password`、`method`、`decryption`、`uuid/id`、`email`、`flow`、`network`、`security`、`dest`、`shortId`、`privateKey`、`xver`
 - `del` 支持按 文件名 / inbound tag / 端口 进行模糊匹配并删除（校验失败自动回滚）
+- 新增配置后会显示可直接填写到代理软件的节点参数（含常用 URI 示例）
 - GEO 更新源配置文件：`/etc/xray/geo_source.conf`

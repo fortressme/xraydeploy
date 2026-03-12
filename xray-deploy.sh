@@ -440,6 +440,61 @@ service_status() {
   return 1
 }
 
+full_uninstall() {
+  print_warn "该操作将彻底卸载 Xray，并删除内核、配置、日志与相关目录。"
+  print_warn "将删除：$XRAY_BIN, $XRAY_DIR, $XRAY_LOG_DIR, /etc/systemd/system/xray.service, /etc/init.d/xray"
+
+  printf "确认彻底卸载请输入 y/yes: "
+  read -r confirm
+  case "$confirm" in
+    y|Y|yes|YES|Yes) ;;
+    *)
+    print_info "已取消卸载。"
+    return 0
+    ;;
+  esac
+
+  print_info "开始停止服务..."
+  service_stop >/dev/null 2>&1 || true
+
+  if command_exists systemctl; then
+    systemctl disable xray >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/xray.service
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl reset-failed xray >/dev/null 2>&1 || true
+  fi
+
+  if command_exists rc-update; then
+    rc-update del xray default >/dev/null 2>&1 || true
+  fi
+  rm -f /etc/init.d/xray
+
+  print_info "删除二进制与数据目录..."
+  rm -f -- "$XRAY_BIN"
+  rm -f -- /usr/local/bin/geoip.dat /usr/local/bin/geosite.dat
+  rm -rf -- "$XRAY_LOG_DIR"
+
+  if [ -d "$XRAY_DIR" ]; then
+    chmod -R u+w "$XRAY_DIR" 2>/dev/null || true
+    rm -rf -- "$XRAY_DIR"
+  fi
+
+  if [ -e "$XRAY_DIR" ]; then
+    print_warn "目录仍存在，尝试深度清理：$XRAY_DIR"
+    find "$XRAY_DIR" -depth -exec rm -rf -- {} + 2>/dev/null || true
+    rm -rf -- "$XRAY_DIR" 2>/dev/null || true
+  fi
+
+  if [ -e "$XRAY_DIR" ]; then
+    print_warn "未能完全删除目录，请手动检查权限或挂载占用：$XRAY_DIR"
+  else
+    print_info "Xray 已彻底卸载。"
+  fi
+
+  print_info "卸载流程结束，脚本即将退出。"
+  exit 0
+}
+
 validate_config() {
   if [ ! -x "$XRAY_BIN" ]; then
     print_warn "未安装 xray，跳过配置校验。"
@@ -538,10 +593,156 @@ safe_write_json_with_arg() {
   return 0
 }
 
+normalize_vless_decryption() {
+  raw_input="$1"
+  text="$(printf "%s" "$raw_input" | tr -d '\r')"
+
+  if [ -z "$text" ]; then
+    return 1
+  fi
+
+  if command_exists jq; then
+    parsed="$(printf "%s" "$text" | jq -r '.. | .encryption? // empty' 2>/dev/null | head -n 1)"
+    if [ -n "$parsed" ] && [ "$parsed" != "null" ]; then
+      printf "%s\n" "$parsed"
+      return 0
+    fi
+  fi
+
+  parsed="$(printf "%s" "$text" | sed -n 's/.*"encryption"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+  if [ -n "$parsed" ]; then
+    printf "%s\n" "$parsed"
+    return 0
+  fi
+
+  line="$(printf "%s\n" "$text" | sed '/^$/d' | tail -n 1)"
+  line="$(printf "%s" "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  line="$(printf "%s" "$line" | sed 's/^"encryption"[[:space:]]*:[[:space:]]*//;s/^encryption[[:space:]]*:[[:space:]]*//')"
+  line="$(printf "%s" "$line" | sed 's/^"//;s/"$//;s/^'"'"'//;s/'"'"'$//')"
+
+  [ -n "$line" ] || return 1
+  printf "%s\n" "$line"
+}
+
 generate_vless_decryption() {
   if [ -x "$XRAY_BIN" ]; then
-    "$XRAY_BIN" vlessenc 2>/dev/null | sed '/^$/d' | tail -n 1
+    raw_output="$($XRAY_BIN vlessenc 2>/dev/null || true)"
+    [ -n "$raw_output" ] || return 1
+    normalize_vless_decryption "$raw_output"
   fi
+}
+
+generate_reality_keypair() {
+  if [ -x "$XRAY_BIN" ]; then
+    key_output="$($XRAY_BIN x25519 2>/dev/null || true)"
+    private_key="$(echo "$key_output" | sed -n 's/.*Private key:[[:space:]]*\(.*\)$/\1/p' | head -n 1)"
+    public_key="$(echo "$key_output" | sed -n 's/.*Public key:[[:space:]]*\(.*\)$/\1/p' | head -n 1)"
+
+    if [ -n "$private_key" ] && [ -n "$public_key" ]; then
+      printf "%s|%s\n" "$private_key" "$public_key"
+      return 0
+    fi
+  fi
+
+  if command_exists wg; then
+    private_key="$(wg genkey 2>/dev/null || true)"
+    if [ -n "$private_key" ]; then
+      public_key="$(printf "%s" "$private_key" | wg pubkey 2>/dev/null || true)"
+      if [ -n "$public_key" ]; then
+        printf "%s|%s\n" "$private_key" "$public_key"
+        return 0
+      fi
+    fi
+  fi
+
+  return 1
+}
+
+derive_reality_public_key() {
+  private_key="$1"
+
+  if [ -z "$private_key" ]; then
+    return 1
+  fi
+
+  if command_exists wg; then
+    derived_pub="$(printf "%s" "$private_key" | wg pubkey 2>/dev/null || true)"
+    [ -n "$derived_pub" ] && { printf "%s\n" "$derived_pub"; return 0; }
+  fi
+
+  return 1
+}
+
+print_ss_node_info() {
+  tag="$1"
+  port="$2"
+  method="$3"
+  password="$4"
+
+  echo ""
+  echo "========= 节点信息（导入代理软件）========="
+  echo "类型: Shadowsocks"
+  echo "节点名(tag): $tag"
+  echo "服务器地址: <你的服务器IP或域名>"
+  echo "端口: $port"
+  echo "加密方式(method): $method"
+  echo "密码(password): $password"
+
+  if command_exists base64; then
+    ss_raw="${method}:${password}"
+    ss_b64="$(printf "%s" "$ss_raw" | base64 | tr -d '\n')"
+    echo "SS URI: ss://${ss_b64}@<你的服务器IP或域名>:${port}#${tag}"
+  fi
+  echo "=========================================="
+}
+
+print_vless_node_info() {
+  tag="$1"
+  port="$2"
+  uuid="$3"
+  decryption="$4"
+  network="$5"
+  security="$6"
+  sni="$7"
+
+  echo ""
+  echo "========= 节点信息（导入代理软件）========="
+  echo "类型: VLESS"
+  echo "节点名(tag): $tag"
+  echo "服务器地址: <你的服务器IP或域名>"
+  echo "端口: $port"
+  echo "UUID: $uuid"
+  echo "decryption: $decryption"
+  echo "network(type): $network"
+  echo "security: $security"
+  [ -n "$sni" ] && echo "SNI(serverName): $sni"
+  echo "VLESS URI: vless://${uuid}@<你的服务器IP或域名>:${port}?encryption=${decryption}&security=${security}&type=${network}#${tag}"
+  echo "=========================================="
+}
+
+print_reality_node_info() {
+  tag="$1"
+  port="$2"
+  uuid="$3"
+  server_name="$4"
+  public_key="$5"
+  short_id="$6"
+  flow="$7"
+
+  echo ""
+  echo "========= 节点信息（导入代理软件）========="
+  echo "类型: VLESS + Reality"
+  echo "节点名(tag): $tag"
+  echo "服务器地址: <你的服务器IP或域名>"
+  echo "端口: $port"
+  echo "UUID: $uuid"
+  echo "flow: $flow"
+  echo "SNI(serverName): $server_name"
+  [ -n "$public_key" ] && echo "publicKey(pbk): $public_key"
+  echo "shortId(sid): $short_id"
+  echo "fingerprint(fp): chrome"
+  echo "VLESS URI: vless://${uuid}@<你的服务器IP或域名>:${port}?encryption=none&flow=${flow}&security=reality&sni=${server_name}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp#${tag}"
+  echo "=========================================="
 }
 
 find_conf_matches() {
@@ -673,6 +874,7 @@ add_shortcut() {
 EOF
       validate_config_or_warn
       print_info "已新增 SS 配置：$file"
+      print_ss_node_info "$config_name" "$port" "$method" "$password"
       ;;
     vlessenc|vless-encryption|vless)
       port="${1:-}"
@@ -688,7 +890,8 @@ EOF
         decryption="$(generate_vless_decryption)"
         [ -n "$decryption" ] || decryption="none"
       else
-        decryption="$decryption_input"
+        decryption="$(normalize_vless_decryption "$decryption_input" || true)"
+        [ -n "$decryption" ] || decryption="$decryption_input"
       fi
 
       if [ -n "$uuid_input" ]; then
@@ -739,6 +942,7 @@ EOF
       validate_config_or_warn
       print_info "已新增 VLESS Encryption 配置：$file"
       print_info "客户端 UUID: ${uuid}"
+      print_vless_node_info "$config_name" "$port" "$uuid" "$decryption" "tcp" "none" ""
       ;;
     reality|vless-reality|vless-reality-vision)
       port="${1:-}"
@@ -755,13 +959,22 @@ EOF
 
       uuid="$(gen_uuid)" || return 1
 
-      if [ -z "$private_key" ] && [ -x "$XRAY_BIN" ]; then
-        key_output="$($XRAY_BIN x25519 2>/dev/null || true)"
-        private_key="$(echo "$key_output" | sed -n 's/.*Private key:[[:space:]]*\(.*\)$/\1/p' | head -n 1)"
-        public_key="$(echo "$key_output" | sed -n 's/.*Public key:[[:space:]]*\(.*\)$/\1/p' | head -n 1)"
+      if [ -z "$private_key" ]; then
+        key_pair="$(generate_reality_keypair || true)"
+        private_key="${key_pair%%|*}"
+        public_key="${key_pair#*|}"
+
+        [ -n "$private_key" ] || {
+          print_error "缺少 privateKey，且自动生成失败（需 xray x25519 或 wg 工具）。"
+          return 1
+        }
+
+        print_info "未填写 privateKey，已自动生成。"
       fi
 
-      [ -n "$private_key" ] || { print_error "缺少 privateKey，请手动传入第4个参数。"; return 1; }
+      if [ -z "$public_key" ]; then
+        public_key="$(derive_reality_public_key "$private_key" || true)"
+      fi
 
       if [ -z "$short_id" ]; then
         short_id="$(hexdump -n 4 -e '4/1 "%02x"' /dev/urandom 2>/dev/null || true)"
@@ -825,6 +1038,7 @@ EOF
       print_info "客户端 UUID: ${uuid}"
       [ -n "$public_key" ] && print_info "REALITY PublicKey: ${public_key}"
       print_info "REALITY shortId: ${short_id}"
+      print_reality_node_info "$config_name" "$port" "$uuid" "$server_name" "$public_key" "$short_id" "xtls-rprx-vision"
       ;;
     *)
       print_error "不支持的协议：$proto"
@@ -865,6 +1079,11 @@ apply_field_change() {
     else
       print_warn "自动生成失败，回退为 none。"
       value="none"
+    fi
+  elif [ "$field_lc" = "decryption" ]; then
+    normalized_dec="$(normalize_vless_decryption "$value" || true)"
+    if [ -n "$normalized_dec" ]; then
+      value="$normalized_dec"
     fi
   fi
 
@@ -1303,6 +1522,7 @@ EOF
 
   validate_config_or_warn
   print_info "已新增 SS 配置：$file"
+  print_ss_node_info "$name" "$port" "$method" "$password"
 }
 
 create_vless_encryption_config() {
@@ -1353,6 +1573,9 @@ create_vless_encryption_config() {
     2)
       printf "decryption（留空则为 none）: "
       read -r decryption
+      if [ -n "$decryption" ]; then
+        decryption="$(normalize_vless_decryption "$decryption" || true)"
+      fi
       [ -n "$decryption" ] || decryption="none"
       ;;
     3)
@@ -1400,6 +1623,7 @@ EOF
   validate_config_or_warn
   print_info "已新增 VLESS Encryption 配置：$file"
   print_info "客户端 UUID: ${uuid}"
+  print_vless_node_info "$name" "$port" "$uuid" "$decryption" "tcp" "none" ""
 }
 
 create_vless_reality_vision_config() {
@@ -1430,15 +1654,19 @@ create_vless_reality_vision_config() {
   private_key=""
   public_key=""
 
-  if [ -x "$XRAY_BIN" ]; then
-    key_output="$("$XRAY_BIN" x25519 2>/dev/null || true)"
-    private_key="$(echo "$key_output" | sed -n 's/.*Private key:[[:space:]]*\(.*\)$/\1/p' | head -n 1)"
-    public_key="$(echo "$key_output" | sed -n 's/.*Public key:[[:space:]]*\(.*\)$/\1/p' | head -n 1)"
-  fi
+  key_pair="$(generate_reality_keypair || true)"
+  private_key="${key_pair%%|*}"
+  public_key="${key_pair#*|}"
 
   if [ -z "$private_key" ]; then
     printf "REALITY privateKey（必填）: "
     read -r private_key
+  else
+    print_info "未填写 privateKey，已自动生成。"
+  fi
+
+  if [ -z "$public_key" ]; then
+    public_key="$(derive_reality_public_key "$private_key" || true)"
   fi
 
   printf "shortId（默认随机 8 位十六进制）: "
@@ -1499,6 +1727,7 @@ EOF
   print_info "客户端 UUID: ${uuid}"
   [ -n "$public_key" ] && print_info "REALITY PublicKey: ${public_key}"
   print_info "REALITY shortId: ${short_id}"
+  print_reality_node_info "$name" "$port" "$uuid" "$server_name" "$public_key" "$short_id" "xtls-rprx-vision"
 }
 
 add_config_menu() {
@@ -1584,6 +1813,60 @@ delete_config() {
       ;;
     *)
       print_info "已取消"
+      ;;
+  esac
+}
+
+show_config_content() {
+  file="$1"
+
+  if [ ! -f "$file" ]; then
+    print_error "文件不存在：$file"
+    return 1
+  fi
+
+  echo "\n========= 配置内容：$file ========="
+  if command_exists jq; then
+    jq . "$file"
+  else
+    cat "$file"
+  fi
+  echo "===================================="
+}
+
+show_config() {
+  ensure_directories
+
+  keyword="${1:-}"
+  if [ -n "$keyword" ]; then
+    if [ "$keyword" = "main" ] || [ "$keyword" = "config" ]; then
+      show_config_content "$XRAY_CONFIG"
+      return $?
+    fi
+
+    matches="$(find_conf_matches "$keyword")"
+    target_file="$(pick_single_match "$matches")" || return 1
+    show_config_content "$target_file"
+    return $?
+  fi
+
+  echo "\n请选择要显示的配置："
+  echo "1) 主配置 $XRAY_CONFIG"
+  echo "2) 子配置 $XRAY_CONF_DIR/*.json"
+  printf "输入编号: "
+  read -r target
+
+  case "$target" in
+    1)
+      show_config_content "$XRAY_CONFIG"
+      ;;
+    2)
+      file="$(select_conf_file)" || return 1
+      show_config_content "$file"
+      ;;
+    *)
+      print_error "无效选项"
+      return 1
       ;;
   esac
 }
@@ -1747,15 +2030,14 @@ print_main_menu() {
 9) 更新 GEOIP/GEOSITE
 10) 下载/更新 Xray Core
 11) 查看内核状态
+12) 显示配置
+13) 彻底卸载
 0) 退出
 =================================
 EOF
 }
 
 run_menu() {
-  ensure_directories
-  create_default_main_config
-
   while true; do
     print_main_menu
     printf "请选择操作: "
@@ -1773,6 +2055,8 @@ run_menu() {
       9) update_geo_files ;;
       10) download_and_install_xray ;;
       11) service_status ;;
+      12) show_config ;;
+      13) full_uninstall ;;
       0) print_info "退出。"; break ;;
       *) print_error "无效选项" ;;
     esac
@@ -1800,6 +2084,8 @@ print_help() {
   stop             关闭内核
   restart          重启内核
   status           查看内核状态
+  show-config      显示配置（主配置或子配置）
+  uninstall        彻底卸载（删除内核/配置/日志/服务）
   setup-service    写入 systemd/OpenRC 服务
   help             显示本帮助
 
@@ -1809,6 +2095,10 @@ print_help() {
   $0 change 33026 sni www.google.com
   $0 change 33026 decryption auto
   $0 del 33026
+  $0 show-config
+  $0 show-config main
+  $0 show-config 8936
+  $0 uninstall
 EOF
 }
 
@@ -1842,6 +2132,11 @@ main() {
     stop) service_stop ;;
     restart) service_restart ;;
     status) service_status ;;
+    show-config|show)
+      shift
+      show_config "$@"
+      ;;
+    uninstall|purge|remove-all) full_uninstall ;;
     setup-service) setup_service ;;
     help|-h|--help) print_help ;;
     *)
