@@ -596,8 +596,15 @@ add_shortcut() {
       password="${2:-}"
       method="${3:-2022-blake3-aes-256-gcm}"
 
-      [ -n "$port" ] || { print_error "用法: $0 add ss <port> <password> [method]"; return 1; }
-      [ -n "$password" ] || { print_error "密码不能为空"; return 1; }
+      if [ -z "$port" ]; then
+        port="$(gen_random_port)"
+        print_info "未填写端口，已随机生成：$port"
+      fi
+
+      if [ -z "$password" ]; then
+        password="$(gen_random_password)"
+        print_info "未填写密码，已随机生成。"
+      fi
 
       config_name="shadowsocks-${port}"
       file="$XRAY_CONF_DIR/${config_name}.json"
@@ -638,7 +645,10 @@ EOF
       decryption_input="${2:-auto}"
       uuid_input="${3:-}"
 
-      [ -n "$port" ] || { print_error "用法: $0 add vlessenc <port> [decryption|auto|none] [uuid]"; return 1; }
+      if [ -z "$port" ]; then
+        port="$(gen_random_port)"
+        print_info "未填写端口，已随机生成：$port"
+      fi
 
       if [ "$decryption_input" = "auto" ]; then
         decryption="$(generate_vless_decryption)"
@@ -704,7 +714,10 @@ EOF
       short_id="${5:-}"
       public_key=""
 
-      [ -n "$port" ] || { print_error "用法: $0 add reality <port> [dest] [serverName] [privateKey] [shortId]"; return 1; }
+      if [ -z "$port" ]; then
+        port="$(gen_random_port)"
+        print_info "未填写端口，已随机生成：$port"
+      fi
 
       uuid="$(gen_uuid)" || return 1
 
@@ -983,12 +996,147 @@ interactive_modify_sub_config() {
       ;;
   esac
 
-  if [ "$field" = "decryption" ]; then
-    printf "输入新值（可填 auto 自动生成）: "
-  else
-    printf "输入新值: "
-  fi
-  read -r value
+  value=""
+  case "$field" in
+    port)
+      echo "\n端口修改方式："
+      echo "1) 手动输入"
+      echo "2) 随机生成"
+      printf "输入编号（默认 1）: "
+      read -r sub_choice
+      [ -n "$sub_choice" ] || sub_choice="1"
+
+      case "$sub_choice" in
+        1)
+          printf "输入新端口: "
+          read -r value
+          ;;
+        2)
+          value="$(gen_random_port)"
+          print_info "已随机生成端口：$value"
+          ;;
+        *)
+          print_error "无效选项"
+          return 1
+          ;;
+      esac
+      ;;
+    password)
+      echo "\n密码修改方式："
+      echo "1) 手动输入"
+      echo "2) 随机生成"
+      printf "输入编号（默认 1）: "
+      read -r sub_choice
+      [ -n "$sub_choice" ] || sub_choice="1"
+
+      case "$sub_choice" in
+        1)
+          printf "输入新密码: "
+          read -r value
+          ;;
+        2)
+          value="$(gen_random_password)"
+          print_info "已随机生成密码。"
+          ;;
+        *)
+          print_error "无效选项"
+          return 1
+          ;;
+      esac
+      ;;
+    method)
+      echo "\n请选择加密方法："
+      echo "1) 2022-blake3-aes-256-gcm"
+      echo "2) 2022-blake3-chacha20-poly1305"
+      echo "3) aes-256-gcm"
+      echo "4) chacha20-ietf-poly1305"
+      echo "5) 自定义"
+      printf "输入编号（默认 1）: "
+      read -r sub_choice
+      [ -n "$sub_choice" ] || sub_choice="1"
+
+      case "$sub_choice" in
+        1) value="2022-blake3-aes-256-gcm" ;;
+        2) value="2022-blake3-chacha20-poly1305" ;;
+        3) value="aes-256-gcm" ;;
+        4) value="chacha20-ietf-poly1305" ;;
+        5) printf "输入自定义 method: "; read -r value ;;
+        *) print_error "无效选项"; return 1 ;;
+      esac
+      ;;
+    decryption)
+      echo "\n请选择 decryption："
+      echo "1) auto（自动生成）"
+      echo "2) none"
+      echo "3) 自定义"
+      printf "输入编号（默认 1）: "
+      read -r sub_choice
+      [ -n "$sub_choice" ] || sub_choice="1"
+
+      case "$sub_choice" in
+        1) value="auto" ;;
+        2) value="none" ;;
+        3) printf "输入自定义 decryption: "; read -r value ;;
+        *) print_error "无效选项"; return 1 ;;
+      esac
+      ;;
+    network)
+      echo "\n请选择 network："
+      echo "1) tcp"
+      echo "2) ws"
+      echo "3) grpc"
+      echo "4) httpupgrade"
+      echo "5) 自定义"
+      printf "输入编号（默认 1）: "
+      read -r sub_choice
+      [ -n "$sub_choice" ] || sub_choice="1"
+
+      case "$sub_choice" in
+        1) value="tcp" ;;
+        2) value="ws" ;;
+        3) value="grpc" ;;
+        4) value="httpupgrade" ;;
+        5) printf "输入自定义 network: "; read -r value ;;
+        *) print_error "无效选项"; return 1 ;;
+      esac
+      ;;
+    security)
+      echo "\n请选择 security："
+      echo "1) none"
+      echo "2) tls"
+      echo "3) reality"
+      echo "4) 自定义"
+      printf "输入编号（默认 1）: "
+      read -r sub_choice
+      [ -n "$sub_choice" ] || sub_choice="1"
+
+      case "$sub_choice" in
+        1) value="none" ;;
+        2) value="tls" ;;
+        3) value="reality" ;;
+        4) printf "输入自定义 security: "; read -r value ;;
+        *) print_error "无效选项"; return 1 ;;
+      esac
+      ;;
+    flow)
+      echo "\n请选择 flow："
+      echo "1) xtls-rprx-vision"
+      echo "2) 自定义"
+      printf "输入编号（默认 1）: "
+      read -r sub_choice
+      [ -n "$sub_choice" ] || sub_choice="1"
+
+      case "$sub_choice" in
+        1) value="xtls-rprx-vision" ;;
+        2) printf "输入自定义 flow: "; read -r value ;;
+        *) print_error "无效选项"; return 1 ;;
+      esac
+      ;;
+    *)
+      printf "输入新值: "
+      read -r value
+      ;;
+  esac
 
   [ -n "$value" ] || { print_error "新值不能为空"; return 1; }
 
@@ -1045,10 +1193,36 @@ gen_uuid() {
   return 1
 }
 
+gen_random_port() {
+  if command_exists od && [ -r /dev/urandom ]; then
+    raw_port="$(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -d '[:space:]')"
+    if [ -n "$raw_port" ]; then
+      # 使用 10000-65534 范围，尽量避开系统常用端口
+      echo $((raw_port % 55535 + 10000))
+      return 0
+    fi
+  fi
+
+  # 兜底：基于 awk 生成伪随机端口
+  awk 'BEGIN{srand(); print int(10000 + rand() * 55535)}'
+}
+
+gen_random_password() {
+  if command_exists head && command_exists base64 && [ -r /dev/urandom ]; then
+    pwd_val="$(head -c 32 /dev/urandom | base64 2>/dev/null || true)"
+    [ -n "$pwd_val" ] && { printf "%s\n" "$pwd_val"; return 0; }
+  fi
+
+  printf "CHANGE_ME_%s\n" "$(date +%s)"
+}
+
 create_ss_config() {
   printf "端口（示例 8936）: "
   read -r port
-  [ -n "$port" ] || { print_error "端口不能为空。"; return 1; }
+  if [ -z "$port" ]; then
+    port="$(gen_random_port)"
+    print_info "未填写端口，已随机生成：$port"
+  fi
 
   printf "配置文件名（不含 .json，留空自动生成为 shadowsocks-%s）: " "$port"
   read -r name
@@ -1064,8 +1238,8 @@ create_ss_config() {
 
   [ -n "$method" ] || method="2022-blake3-aes-256-gcm"
   if [ -z "$password" ]; then
-    password="$(head -c 32 /dev/urandom | base64 2>/dev/null || true)"
-    [ -n "$password" ] || password="CHANGE_ME"
+    password="$(gen_random_password)"
+    print_info "未填写密码，已随机生成。"
   fi
 
   cat > "$file" <<EOF
@@ -1100,7 +1274,10 @@ EOF
 create_vless_encryption_config() {
   printf "端口: "
   read -r port
-  [ -n "$port" ] || { print_error "端口不能为空。"; return 1; }
+  if [ -z "$port" ]; then
+    port="$(gen_random_port)"
+    print_info "未填写端口，已随机生成：$port"
+  fi
 
   printf "配置文件名（不含 .json，留空自动生成为 vless-%s）: " "$port"
   read -r name
@@ -1194,7 +1371,10 @@ EOF
 create_vless_reality_vision_config() {
   printf "端口: "
   read -r port
-  [ -n "$port" ] || { print_error "端口不能为空。"; return 1; }
+  if [ -z "$port" ]; then
+    port="$(gen_random_port)"
+    print_info "未填写端口，已随机生成：$port"
+  fi
 
   printf "配置文件名（不含 .json，留空自动生成为 reality-%s）: " "$port"
   read -r name
