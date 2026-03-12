@@ -89,6 +89,18 @@ ensure_directories() {
   fi
 }
 
+ensure_geo_asset_links() {
+  # Some Xray builds resolve geo files from binary directory by default.
+  # Keep compatibility links so either asset path works.
+  if [ -f "$XRAY_DIR/geoip.dat" ]; then
+    ln -sf "$XRAY_DIR/geoip.dat" /usr/local/bin/geoip.dat 2>/dev/null || true
+  fi
+
+  if [ -f "$XRAY_DIR/geosite.dat" ]; then
+    ln -sf "$XRAY_DIR/geosite.dat" /usr/local/bin/geosite.dat 2>/dev/null || true
+  fi
+}
+
 create_default_main_config() {
   if [ -f "$XRAY_CONFIG" ]; then
     return 0
@@ -273,6 +285,8 @@ download_and_install_xray() {
     install -m 644 "$tmp_dir/geosite.dat" "$XRAY_DIR/geosite.dat"
   fi
 
+  ensure_geo_asset_links
+
   rm -rf "$tmp_dir"
 
   print_info "Xray Core 已安装到：$XRAY_BIN"
@@ -289,6 +303,7 @@ After=network.target nss-lookup.target
 
 [Service]
 Type=simple
+Environment="XRAY_LOCATION_ASSET=$XRAY_DIR"
 ExecStart=$XRAY_BIN run -c $XRAY_CONFIG -confdir $XRAY_CONF_DIR
 Restart=on-failure
 RestartSec=5
@@ -310,6 +325,7 @@ name="xray"
 description="Xray Service"
 command="$XRAY_BIN"
 command_args="run -c $XRAY_CONFIG -confdir $XRAY_CONF_DIR"
+command_env="XRAY_LOCATION_ASSET=$XRAY_DIR"
 command_background=true
 pidfile="/run/xray.pid"
 
@@ -1709,6 +1725,8 @@ update_geo_files() {
 
   install -m 644 "$tmp_dir/geoip.dat" "$XRAY_DIR/geoip.dat"
   install -m 644 "$tmp_dir/geosite.dat" "$XRAY_DIR/geosite.dat"
+
+  ensure_geo_asset_links
 
   rm -rf "$tmp_dir"
   print_info "GEO 文件更新完成。"
