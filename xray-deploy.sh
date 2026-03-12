@@ -599,14 +599,18 @@ add_shortcut() {
       [ -n "$port" ] || { print_error "用法: $0 add ss <port> <password> [method]"; return 1; }
       [ -n "$password" ] || { print_error "密码不能为空"; return 1; }
 
-      file="$XRAY_CONF_DIR/Shadowsocks-${port}.json"
-      [ ! -f "$file" ] || file="$XRAY_CONF_DIR/Shadowsocks-${port}-$(date +%s).json"
+      config_name="shadowsocks-${port}"
+      file="$XRAY_CONF_DIR/${config_name}.json"
+      if [ -f "$file" ]; then
+        config_name="${config_name}-$(date +%s)"
+        file="$XRAY_CONF_DIR/${config_name}.json"
+      fi
 
       cat > "$file" <<EOF
 {
   "inbounds": [
     {
-      "tag": "$(basename "$file")",
+      "tag": "${config_name}",
       "port": ${port},
       "listen": "0.0.0.0",
       "protocol": "shadowsocks",
@@ -649,14 +653,18 @@ EOF
         uuid="$(gen_uuid)" || return 1
       fi
 
-      file="$XRAY_CONF_DIR/VLESS-Encryption-${port}.json"
-      [ ! -f "$file" ] || file="$XRAY_CONF_DIR/VLESS-Encryption-${port}-$(date +%s).json"
+      config_name="vless-${port}"
+      file="$XRAY_CONF_DIR/${config_name}.json"
+      if [ -f "$file" ]; then
+        config_name="${config_name}-$(date +%s)"
+        file="$XRAY_CONF_DIR/${config_name}.json"
+      fi
 
       cat > "$file" <<EOF
 {
   "inbounds": [
     {
-      "tag": "$(basename "$file")",
+      "tag": "${config_name}",
       "port": ${port},
       "listen": "0.0.0.0",
       "protocol": "vless",
@@ -713,14 +721,18 @@ EOF
         [ -n "$short_id" ] || short_id="6ba85179"
       fi
 
-      file="$XRAY_CONF_DIR/VLESS-Reality-Vision-${port}.json"
-      [ ! -f "$file" ] || file="$XRAY_CONF_DIR/VLESS-Reality-Vision-${port}-$(date +%s).json"
+      config_name="reality-${port}"
+      file="$XRAY_CONF_DIR/${config_name}.json"
+      if [ -f "$file" ]; then
+        config_name="${config_name}-$(date +%s)"
+        file="$XRAY_CONF_DIR/${config_name}.json"
+      fi
 
       cat > "$file" <<EOF
 {
   "inbounds": [
     {
-      "tag": "$(basename "$file")",
+      "tag": "${config_name}",
       "port": ${port},
       "listen": "0.0.0.0",
       "protocol": "vless",
@@ -787,6 +799,14 @@ change_shortcut() {
 
   matches="$(find_conf_matches "$keyword")"
   target_file="$(pick_single_match "$matches")" || return 1
+
+  apply_field_change "$target_file" "$field" "$value"
+}
+
+apply_field_change() {
+  target_file="$1"
+  field="$2"
+  value="$3"
 
   field_lc="$(printf "%s" "$field" | tr 'A-Z' 'a-z')"
 
@@ -861,6 +881,120 @@ change_shortcut() {
   safe_write_json_with_arg "$target_file" "$jq_filter" "$value"
 }
 
+interactive_modify_sub_config() {
+  file="$1"
+  protocol="$(jq -r '.inbounds[0].protocol // empty' "$file" 2>/dev/null)"
+  security="$(jq -r '.inbounds[0].streamSettings.security // empty' "$file" 2>/dev/null)"
+
+  [ -n "$protocol" ] || { print_error "无法识别协议，配置缺少 .inbounds[0].protocol"; return 1; }
+
+  print_info "当前配置：$(basename "$file")"
+  print_info "识别协议：${protocol}${security:+, security=${security}}"
+
+  field=""
+
+  case "$protocol" in
+    shadowsocks)
+      echo "\n可修改项（Shadowsocks）："
+      echo "1) tag"
+      echo "2) port"
+      echo "3) listen"
+      echo "4) method"
+      echo "5) password"
+      printf "输入编号: "
+      read -r choice
+
+      case "$choice" in
+        1) field="tag" ;;
+        2) field="port" ;;
+        3) field="listen" ;;
+        4) field="method" ;;
+        5) field="password" ;;
+        *) print_error "无效选项"; return 1 ;;
+      esac
+      ;;
+    vless)
+      if [ "$security" = "reality" ]; then
+        echo "\n可修改项（VLESS + REALITY）："
+        echo "1) tag"
+        echo "2) port"
+        echo "3) listen"
+        echo "4) uuid"
+        echo "5) flow"
+        echo "6) decryption"
+        echo "7) network"
+        echo "8) security"
+        echo "9) serverName"
+        echo "10) dest"
+        echo "11) shortId"
+        echo "12) privateKey"
+        echo "13) xver"
+        printf "输入编号: "
+        read -r choice
+
+        case "$choice" in
+          1) field="tag" ;;
+          2) field="port" ;;
+          3) field="listen" ;;
+          4) field="uuid" ;;
+          5) field="flow" ;;
+          6) field="decryption" ;;
+          7) field="network" ;;
+          8) field="security" ;;
+          9) field="serverName" ;;
+          10) field="dest" ;;
+          11) field="shortId" ;;
+          12) field="privateKey" ;;
+          13) field="xver" ;;
+          *) print_error "无效选项"; return 1 ;;
+        esac
+      else
+        echo "\n可修改项（VLESS）："
+        echo "1) tag"
+        echo "2) port"
+        echo "3) listen"
+        echo "4) uuid"
+        echo "5) email"
+        echo "6) decryption"
+        echo "7) network"
+        echo "8) security"
+        echo "9) serverName"
+        printf "输入编号: "
+        read -r choice
+
+        case "$choice" in
+          1) field="tag" ;;
+          2) field="port" ;;
+          3) field="listen" ;;
+          4) field="uuid" ;;
+          5) field="email" ;;
+          6) field="decryption" ;;
+          7) field="network" ;;
+          8) field="security" ;;
+          9) field="serverName" ;;
+          *) print_error "无效选项"; return 1 ;;
+        esac
+      fi
+      ;;
+    *)
+      print_warn "暂未内置该协议的字段菜单：$protocol"
+      print_warn "可使用命令行 change 快捷修改，或通过主配置 jq 模式手动改。"
+      return 1
+      ;;
+  esac
+
+  if [ "$field" = "decryption" ]; then
+    printf "输入新值（可填 auto 自动生成）: "
+  else
+    printf "输入新值: "
+  fi
+  read -r value
+
+  [ -n "$value" ] || { print_error "新值不能为空"; return 1; }
+
+  apply_field_change "$file" "$field" "$value"
+}
+
 delete_shortcut() {
   keyword="${1:-}"
   [ -n "$keyword" ] || { print_error "用法: $0 del <keyword>"; return 1; }
@@ -912,15 +1046,17 @@ gen_uuid() {
 }
 
 create_ss_config() {
-  printf "配置文件名（不含 .json）: "
+  printf "端口（示例 8936）: "
+  read -r port
+  [ -n "$port" ] || { print_error "端口不能为空。"; return 1; }
+
+  printf "配置文件名（不含 .json，留空自动生成为 shadowsocks-%s）: " "$port"
   read -r name
-  [ -n "$name" ] || { print_error "文件名不能为空。"; return 1; }
+  [ -n "$name" ] || name="shadowsocks-${port}"
 
   file="$XRAY_CONF_DIR/${name}.json"
   [ ! -f "$file" ] || { print_error "文件已存在：$file"; return 1; }
 
-  printf "端口（示例 8936）: "
-  read -r port
   printf "加密方法（默认 2022-blake3-aes-256-gcm）: "
   read -r method
   printf "密码（留空自动生成 32 字节）: "
@@ -936,7 +1072,7 @@ create_ss_config() {
 {
   "inbounds": [
     {
-      "tag": "$(basename "$file")",
+      "tag": "${name}",
       "port": ${port},
       "listen": "0.0.0.0",
       "protocol": "shadowsocks",
@@ -962,15 +1098,17 @@ EOF
 }
 
 create_vless_encryption_config() {
-  printf "配置文件名（不含 .json）: "
+  printf "端口: "
+  read -r port
+  [ -n "$port" ] || { print_error "端口不能为空。"; return 1; }
+
+  printf "配置文件名（不含 .json，留空自动生成为 vless-%s）: " "$port"
   read -r name
-  [ -n "$name" ] || { print_error "文件名不能为空。"; return 1; }
+  [ -n "$name" ] || name="vless-${port}"
 
   file="$XRAY_CONF_DIR/${name}.json"
   [ ! -f "$file" ] || { print_error "文件已存在：$file"; return 1; }
 
-  printf "端口: "
-  read -r port
   uuid="$(gen_uuid)" || return 1
 
   printf "邮箱标识（默认 admin@xray.local）: "
@@ -1019,7 +1157,7 @@ create_vless_encryption_config() {
 {
   "inbounds": [
     {
-      "tag": "$(basename "$file")",
+      "tag": "${name}",
       "port": ${port},
       "listen": "0.0.0.0",
       "protocol": "vless",
@@ -1054,15 +1192,17 @@ EOF
 }
 
 create_vless_reality_vision_config() {
-  printf "配置文件名（不含 .json）: "
+  printf "端口: "
+  read -r port
+  [ -n "$port" ] || { print_error "端口不能为空。"; return 1; }
+
+  printf "配置文件名（不含 .json，留空自动生成为 reality-%s）: " "$port"
   read -r name
-  [ -n "$name" ] || { print_error "文件名不能为空。"; return 1; }
+  [ -n "$name" ] || name="reality-${port}"
 
   file="$XRAY_CONF_DIR/${name}.json"
   [ ! -f "$file" ] || { print_error "文件已存在：$file"; return 1; }
 
-  printf "端口: "
-  read -r port
   uuid="$(gen_uuid)" || return 1
 
   printf "REALITY dest（默认 www.cloudflare.com:443）: "
@@ -1098,7 +1238,7 @@ create_vless_reality_vision_config() {
 {
   "inbounds": [
     {
-      "tag": "$(basename "$file")",
+      "tag": "${name}",
       "port": ${port},
       "listen": "0.0.0.0",
       "protocol": "vless",
@@ -1177,30 +1317,41 @@ modify_config_item() {
 
   if [ "$target" = "1" ]; then
     file="$XRAY_CONFIG"
-  elif [ "$target" = "2" ]; then
+
+    if [ ! -f "$file" ]; then
+      print_error "文件不存在：$file"
+      return 1
+    fi
+
+    echo "示例路径：.inbounds[0].port"
+    printf "输入 jq 路径: "
+    read -r jq_path
+
+    echo "示例值：443 或 \"new.example.com\" 或 [\"8.8.8.8\",\"1.1.1.1\"]"
+    printf "输入新值（JSON 格式）: "
+    read -r json_value
+
+    [ -n "$jq_path" ] || { print_error "路径不能为空"; return 1; }
+    [ -n "$json_value" ] || { print_error "值不能为空"; return 1; }
+
+    safe_write_json "$file" "$jq_path = $json_value"
+    return $?
+  fi
+
+  if [ "$target" = "2" ]; then
     file="$(select_conf_file)" || return 1
-  else
-    print_error "无效选项"
-    return 1
+
+    if [ ! -f "$file" ]; then
+      print_error "文件不存在：$file"
+      return 1
+    fi
+
+    interactive_modify_sub_config "$file"
+    return $?
   fi
 
-  if [ ! -f "$file" ]; then
-    print_error "文件不存在：$file"
-    return 1
-  fi
-
-  echo "示例路径：.inbounds[0].port"
-  printf "输入 jq 路径: "
-  read -r jq_path
-
-  echo "示例值：443 或 \"new.example.com\" 或 [\"8.8.8.8\",\"1.1.1.1\"]"
-  printf "输入新值（JSON 格式）: "
-  read -r json_value
-
-  [ -n "$jq_path" ] || { print_error "路径不能为空"; return 1; }
-  [ -n "$json_value" ] || { print_error "值不能为空"; return 1; }
-
-  safe_write_json "$file" "$jq_path = $json_value"
+  print_error "无效选项"
+  return 1
 }
 
 delete_config() {
@@ -1232,8 +1383,62 @@ modify_dns() {
     return 1
   fi
 
-  printf "输入 DNS 服务器（逗号分隔），示例：https+local://dns.google/dns-query,1.1.1.1\n> "
-  read -r dns_input
+  echo "请选择 DNS（可多选，逗号分隔）："
+  echo "1) 8.8.8.8 (Google UDP)"
+  echo "2) 8.8.4.4 (Google UDP)"
+  echo "3) https+local://dns.google/dns-query (Google DoH)"
+  echo "4) 1.1.1.1 (Cloudflare UDP)"
+  echo "5) 1.0.0.1 (Cloudflare UDP)"
+  echo "6) https+local://cloudflare-dns.com/dns-query (Cloudflare DoH)"
+  echo "7) 223.5.5.5 (AliDNS UDP)"
+  echo "8) 119.29.29.29 (DNSPod UDP)"
+  echo "9) https+local://dns.alidns.com/dns-query (AliDNS DoH)"
+  echo "10) 自定义输入"
+  printf "输入编号（示例: 3,6 或 4,10）: "
+  read -r dns_choice
+
+  [ -n "$dns_choice" ] || { print_error "DNS 选项不能为空"; return 1; }
+
+  dns_input=""
+
+  append_dns_value() {
+    val="$1"
+    if [ -z "$dns_input" ]; then
+      dns_input="$val"
+    else
+      dns_input="$dns_input,$val"
+    fi
+  }
+
+  old_ifs="$IFS"
+  IFS=','
+  set -- $dns_choice
+  IFS="$old_ifs"
+
+  for raw_choice in "$@"; do
+    choice="$(printf "%s" "$raw_choice" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    case "$choice" in
+      1) append_dns_value "8.8.8.8" ;;
+      2) append_dns_value "8.8.4.4" ;;
+      3) append_dns_value "https+local://dns.google/dns-query" ;;
+      4) append_dns_value "1.1.1.1" ;;
+      5) append_dns_value "1.0.0.1" ;;
+      6) append_dns_value "https+local://cloudflare-dns.com/dns-query" ;;
+      7) append_dns_value "223.5.5.5" ;;
+      8) append_dns_value "119.29.29.29" ;;
+      9) append_dns_value "https+local://dns.alidns.com/dns-query" ;;
+      10)
+        printf "输入自定义 DNS（逗号分隔）: "
+        read -r custom_dns
+        [ -n "$custom_dns" ] || { print_error "自定义 DNS 不能为空"; return 1; }
+        append_dns_value "$custom_dns"
+        ;;
+      *)
+        print_error "无效编号：$choice"
+        return 1
+        ;;
+    esac
+  done
 
   [ -n "$dns_input" ] || { print_error "DNS 输入不能为空"; return 1; }
 
