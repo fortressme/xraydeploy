@@ -394,7 +394,25 @@ service_start() {
 service_status() {
   if command_exists systemctl; then
     systemctl status xray --no-pager
-    return $?
+    status_code=$?
+
+    if [ "$status_code" -ne 0 ]; then
+      print_warn "检测到服务状态异常，开始执行诊断。"
+
+      if [ -x "$XRAY_BIN" ]; then
+        print_info "执行配置校验：$XRAY_BIN run -test -c $XRAY_CONFIG -confdir $XRAY_CONF_DIR"
+        "$XRAY_BIN" run -test -c "$XRAY_CONFIG" -confdir "$XRAY_CONF_DIR" || true
+      else
+        print_warn "未找到 xray 可执行文件：$XRAY_BIN"
+      fi
+
+      if command_exists journalctl; then
+        print_info "最近 40 行 xray 日志："
+        journalctl -u xray -n 40 --no-pager || true
+      fi
+    fi
+
+    return $status_code
   fi
 
   if command_exists rc-service; then
