@@ -976,7 +976,9 @@ EOF
         public_key="$(derive_reality_public_key "$private_key" || true)"
       fi
 
-      if [ -z "$short_id" ]; then
+      if [ "$short_id" = "empty" ] || [ "$short_id" = "none" ] || [ "$short_id" = '""' ]; then
+        short_id=""
+      elif [ -z "$short_id" ]; then
         short_id="$(hexdump -n 4 -e '4/1 "%02x"' /dev/urandom 2>/dev/null || true)"
         [ -n "$short_id" ] || short_id="6ba85179"
       fi
